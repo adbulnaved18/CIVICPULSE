@@ -1,0 +1,474 @@
+/* ============================================================
+   CIVICPULSE — ADMIN MAP
+============================================================ */
+
+:root {
+  --am-green: #087a5a;
+  --am-green-dark: #045c44;
+  --am-green-light: #eaf6ef;
+  --am-border: #dce8e1;
+  --am-text: #17251f;
+  --am-text-soft: #62736a;
+}
+
+.admin-map-page {
+  min-height: 100vh;
+  padding: 0 0 60px;
+
+  background:
+    radial-gradient(
+      circle at 85% 0%,
+      rgba(8, 122, 90, 0.06),
+      transparent 30%
+    ),
+    #f7faf8;
+
+  color: var(--am-text);
+
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Arial,
+    sans-serif;
+}
+
+
+/* ============================================================
+   HEADER
+============================================================ */
+
+.admin-map-header {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 28px 30px 24px;
+
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 30px;
+}
+
+.admin-map-label {
+  display: inline-flex;
+  align-items: center;
+
+  padding: 6px 12px;
+  margin-bottom: 12px;
+
+  border: 1px solid #cfe7d9;
+  border-radius: 30px;
+
+  background: var(--am-green-light);
+  color: var(--am-green);
+
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+}
+
+.admin-map-header h1 {
+  margin: 0;
+  font-size: clamp(30px, 4vw, 48px);
+  font-weight: 800;
+  color: var(--am-green-dark);
+  letter-spacing: -1.5px;
+  line-height: 1.1;
+}
+
+.admin-map-header p {
+  margin: 10px 0 0;
+  color: var(--am-text-soft);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.admin-map-back {
+  flex-shrink: 0;
+
+  padding: 10px 20px;
+
+  border: 1px solid var(--am-border);
+  border-radius: 10px;
+
+  background: white;
+
+  color: var(--am-green-dark);
+
+  font-size: 13px;
+  font-weight: 700;
+
+  text-decoration: none;
+
+  transition:
+    background 180ms ease,
+    border-color 180ms ease,
+    transform 180ms ease;
+}
+
+.admin-map-back:hover {
+  background: var(--am-green-light);
+  border-color: var(--am-green);
+  transform: translateY(-1px);
+}
+
+
+/* ============================================================
+   TOOLBAR
+============================================================ */
+
+.admin-map-toolbar {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 30px 16px;
+
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.admin-map-filters {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.admin-map-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-map-filter-group label {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--am-text-soft);
+}
+
+.admin-map-filter-group select {
+  padding: 8px 14px;
+
+  border: 1px solid var(--am-border);
+  border-radius: 8px;
+
+  background: white;
+
+  font-size: 13px;
+  font-weight: 600;
+
+  color: var(--am-text);
+
+  cursor: pointer;
+
+  transition: border-color 180ms ease;
+}
+
+.admin-map-filter-group select:hover {
+  border-color: var(--am-green);
+}
+
+
+/* ============================================================
+   STATS
+============================================================ */
+
+.admin-map-stats {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.map-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+
+  padding: 6px 14px;
+
+  border-radius: 8px;
+
+  background: white;
+  border: 1px solid var(--am-border);
+}
+
+.map-stat strong {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--am-text);
+}
+
+.map-stat span {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--am-text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.map-stat-pending strong {
+  color: #c98a18;
+}
+
+.map-stat-progress strong {
+  color: #3b82f6;
+}
+
+.map-stat-resolved strong {
+  color: #16a34a;
+}
+
+
+/* ============================================================
+   LEGEND
+============================================================ */
+
+.admin-map-legend {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 30px 12px;
+
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--am-text-soft);
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+
+  border-radius: 50%;
+
+  flex-shrink: 0;
+}
+
+
+/* ============================================================
+   MAP CONTAINER
+============================================================ */
+
+.admin-map-container {
+  position: relative;
+
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 30px;
+}
+
+.admin-map-leaflet {
+  width: 100%;
+  height: 600px;
+
+  border-radius: 16px;
+  border: 1px solid var(--am-border);
+
+  box-shadow: 0 12px 35px rgba(10, 62, 49, 0.08);
+
+  z-index: 1;
+}
+
+.admin-map-loading,
+.admin-map-error {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 60px 30px;
+
+  text-align: center;
+
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--am-text-soft);
+}
+
+.admin-map-error {
+  color: #c94d4d;
+}
+
+.admin-map-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+
+  padding: 20px 30px;
+
+  border-radius: 12px;
+
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid var(--am-border);
+
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--am-text-soft);
+
+  text-align: center;
+
+  z-index: 500;
+
+  pointer-events: none;
+}
+
+
+/* ============================================================
+   MAP POPUP
+============================================================ */
+
+.map-popup {
+  min-width: 240px;
+  max-width: 300px;
+}
+
+.map-popup-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  margin-bottom: 8px;
+}
+
+.map-popup-status {
+  padding: 3px 10px;
+
+  border-radius: 6px;
+
+  font-size: 11px;
+  font-weight: 700;
+
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.map-popup-pending {
+  background: #fff8eb;
+  color: #b97922;
+}
+
+.map-popup-in-progress {
+  background: #eff6ff;
+  color: #2563eb;
+}
+
+.map-popup-resolved {
+  background: #ecfdf5;
+  color: #16a34a;
+}
+
+.map-popup-priority {
+  padding: 3px 10px;
+
+  border-radius: 6px;
+
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.map-priority-high {
+  background: #fff0f0;
+  color: #c94d4d;
+}
+
+.map-priority-medium {
+  background: #fff8eb;
+  color: #b97922;
+}
+
+.map-priority-low {
+  background: #f0f8ff;
+  color: #3b6ea5;
+}
+
+.map-popup-desc {
+  margin: 0 0 10px;
+
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.5;
+
+  color: var(--am-text);
+
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.map-popup-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  font-size: 12px;
+  color: var(--am-text-soft);
+}
+
+.map-popup-meta span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.map-popup-id {
+  margin-top: 10px;
+  padding-top: 8px;
+
+  border-top: 1px solid #eee;
+
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--am-text-soft);
+}
+
+
+/* ============================================================
+   CUSTOM MARKER ICON
+============================================================ */
+
+.map-marker-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+
+/* ============================================================
+   RESPONSIVE
+============================================================ */
+
+@media (max-width: 760px) {
+  .admin-map-header {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 20px 20px 16px;
+  }
+
+  .admin-map-toolbar {
+    padding: 0 20px 12px;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .admin-map-legend {
+    padding: 0 20px 10px;
+  }
+
+  .admin-map-container {
+    padding: 0 20px;
+  }
+
+  .admin-map-leaflet {
+    height: 400px;
+    border-radius: 12px;
+  }
+}

@@ -1,0 +1,52 @@
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Uploads
+uploads/
+backend/uploads/
+
+# Frontend (Node.js)
+node_modules/
+frontend/dist/
+.npm/
+
+# DB
+*.sqlite3
+database/civicpulse.db
+
+# OS generated files
+.DS_Store
+Thumbs.db
