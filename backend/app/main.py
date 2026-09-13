@@ -1,6 +1,10 @@
 import os
 import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
+
+_START_TIME = time.time()
 
 # ============================================================
 # PATH SETUP
@@ -232,9 +236,12 @@ def root():
 
 
 @app.get("/health")
+@app.get("/api/health")
 def health_check():
     return {
         "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "uptime": time.time() - _START_TIME,
         "service": "CivicPulse API",
     }
 
