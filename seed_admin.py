@@ -14,9 +14,19 @@ registered (e.g. if you signed up normally through the app first).
 import getpass
 import os
 import sys
+from pathlib import Path
+
+# Load .env before any app imports so DATABASE_URL etc. are available
+try:
+    from dotenv import load_dotenv
+    _root = Path(__file__).resolve().parent
+    load_dotenv(_root / ".env")
+except ImportError:
+    pass
 
 from backend.app.auth.security import hash_password
 from backend.app.services.database import get_db, initialize_database
+from backend.app.services import db_compat
 
 
 def main():
@@ -35,16 +45,14 @@ def main():
     db = get_db()
 
     try:
-        cursor = db.cursor()
-
-        cursor.execute(
-            "SELECT id, role FROM users WHERE email = ?", (email,)
+        cursor = db_compat.execute(
+            db, "SELECT id, role FROM users WHERE email = ?", (email,)
         )
         existing = cursor.fetchone()
 
         if existing is not None:
-            cursor.execute(
-                "UPDATE users SET role = 'admin' WHERE email = ?", (email,)
+            db_compat.execute(
+                db, "UPDATE users SET role = 'admin' WHERE email = ?", (email,)
             )
             db.commit()
             print(
@@ -67,7 +75,8 @@ def main():
 
         password_hash = hash_password(password)
 
-        cursor.execute(
+        db_compat.execute_insert(
+            db,
             """
             INSERT INTO users (name, email, password_hash, role)
             VALUES (?, ?, ?, 'admin')

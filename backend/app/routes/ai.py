@@ -17,6 +17,7 @@ import hashlib
 import io
 import logging
 import uuid
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import (
@@ -45,6 +46,7 @@ from backend.app.ai.schemas import AIHealthResponse, AnalyzeResponse, Transcribe
 from backend.app.ai.prompts import PROMPT_VERSION
 from backend.app.auth.dependencies import get_current_user
 from backend.app.services.database import get_db
+from backend.app.services import db_compat
 
 logger = logging.getLogger(__name__)
 
@@ -333,9 +335,14 @@ async def analyze_report_endpoint(
     # --------------------------------------------------------
     analysis_id = str(uuid.uuid4())
 
+    # Compute expires_at in Python to avoid dialect-specific SQL functions
+    # (SQLite: datetime('now', '+1 hour')  vs  PostgreSQL: NOW() + INTERVAL)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+
     db = get_db()
     try:
-        db.execute(
+        db_compat.execute(
+            db,
             """
             INSERT INTO report_ai_analyses (
                 id,
@@ -352,8 +359,7 @@ async def analyze_report_endpoint(
                 model,
                 prompt_version,
                 expires_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                      datetime('now', '+1 hour'))
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 analysis_id,
@@ -373,6 +379,7 @@ async def analyze_report_endpoint(
                 "gemini",
                 "multimodal",
                 PROMPT_VERSION,
+                expires_at.isoformat(),
             ),
         )
         db.commit()

@@ -16,6 +16,8 @@ import logging
 import os
 from typing import Optional
 
+from backend.app.services import db_compat
+
 logger = logging.getLogger(__name__)
 
 EMBEDDING_MODEL: str = os.environ.get("GEMINI_EMBEDDING_MODEL", "text-embedding-004")
@@ -50,11 +52,13 @@ def generate_embedding(text: str) -> Optional[list[float]]:
         client = genai.Client(api_key=api_key)
         response = client.models.embed_content(
             model=EMBEDDING_MODEL,
-            content=text,
+            contents=text,
         )
-        values = response.embedding.values
-        if not values:
-            logger.warning("Embedding API returned empty vector.")
+        
+        values = response.embeddings[0].values if getattr(response, "embeddings", None) else None
+        
+        if not values or len(values) != EMBEDDING_DIM:
+            logger.warning("Embedding API returned empty or invalid dimension vector.")
             return None
         return list(values)
 
@@ -82,33 +86,24 @@ def store_complaint_embedding(
     now = datetime.now(timezone.utc).isoformat()
 
     try:
-        cursor = db.cursor()
+        # Use db_compat for reliable SQLite vs PostgreSQL detection
+        if db_compat.is_sqlite(db):
+            # SQLite: store embedding as JSON text in embedding_json column
+            cursor = db.cursor()
 
-        # Detect database type
-        cursor.execute("SELECT 1")
-        db_type = type(db).__module__
-
-        if "sqlite3" in db_type or hasattr(db, "row_factory"):
-            # SQLite: store as JSON text in a text column (migration step)
-            # First ensure the column exists
+            # Ensure all embedding columns exist (idempotent)
             cursor.execute("PRAGMA table_info(complaints)")
             cols = [r[1] for r in cursor.fetchall()]
-            if "embedding_json" not in cols:
-                cursor.execute(
-                    "ALTER TABLE complaints ADD COLUMN embedding_json TEXT"
-                )
-            if "embedding_model" not in cols:
-                cursor.execute(
-                    "ALTER TABLE complaints ADD COLUMN embedding_model TEXT"
-                )
-            if "embedding_created_at" not in cols:
-                cursor.execute(
-                    "ALTER TABLE complaints ADD COLUMN embedding_created_at TEXT"
-                )
-            if "embedding_version" not in cols:
-                cursor.execute(
-                    "ALTER TABLE complaints ADD COLUMN embedding_version TEXT"
-                )
+            for col, col_type in (
+                ("embedding_json", "TEXT"),
+                ("embedding_model", "TEXT"),
+                ("embedding_created_at", "TEXT"),
+                ("embedding_version", "TEXT"),
+            ):
+                if col not in cols:
+                    cursor.execute(
+                        f"ALTER TABLE complaints ADD COLUMN {col} {col_type}"
+                    )
 
             cursor.execute(
                 """
@@ -128,20 +123,42 @@ def store_complaint_embedding(
                 ),
             )
             db.commit()
+
         else:
-            # PostgreSQL with pgvector
-            cursor.execute(
-                """
-                UPDATE complaints
-                SET embedding = %s::vector,
-                    embedding_model = %s,
-                    embedding_created_at = %s,
-                    embedding_version = %s
-                WHERE id = %s
-                """,
-                (embedding, EMBEDDING_MODEL, now, EMBEDDING_VERSION, complaint_id),
-            )
-            db.commit()
+            # PostgreSQL with pgvector: use %s placeholders directly.
+            # The ::vector cast must stay as a SQL literal — db_compat.execute
+            # would double-convert it, so we call cursor.execute directly.
+            vec_str = "[" + ",".join(str(v) for v in embedding) + "]"
+            cursor = db.cursor()
+            try:
+                cursor.execute(
+                    """
+                    UPDATE complaints
+                    SET embedding = %s::vector,
+                        embedding_model = %s,
+                        embedding_created_at = %s,
+                        embedding_version = %s
+                    WHERE id = %s
+                    """,
+                    (vec_str, EMBEDDING_MODEL, now, EMBEDDING_VERSION, complaint_id),
+                )
+                db.commit()
+            except Exception as pg_err:
+                db.rollback()
+                logger.info("pgvector not available or error, falling back to embedding_json: %s", pg_err)
+                cursor = db.cursor()
+                cursor.execute(
+                    """
+                    UPDATE complaints
+                    SET embedding_json = %s,
+                        embedding_model = %s,
+                        embedding_created_at = %s,
+                        embedding_version = %s
+                    WHERE id = %s
+                    """,
+                    (json.dumps(embedding), EMBEDDING_MODEL, now, EMBEDDING_VERSION, complaint_id),
+                )
+                db.commit()
 
         return True
 

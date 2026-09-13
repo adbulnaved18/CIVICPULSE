@@ -591,6 +591,11 @@ export function getEvidenceUrl(filePath) {
     return "";
   }
 
+  // Absolute URL (e.g. Supabase Storage signed/public URL)
+  if (/^https?:\/\//i.test(filePath)) {
+    return filePath;
+  }
+
   const cleanPath = String(filePath).replace(
     /^\/+/,
     ""

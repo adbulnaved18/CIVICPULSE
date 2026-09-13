@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from backend.app.auth.dependencies import get_current_user
 from backend.app.services.database import get_db
+from backend.app.services import db_compat
 
 
 router = APIRouter(
@@ -102,7 +103,6 @@ def get_priorities(
     """
 
     db = get_db()
-    cursor = db.cursor()
 
     try:
 
@@ -156,7 +156,7 @@ def get_priorities(
                 c.id ASC
         """
 
-        cursor.execute(query, params)
+        cursor = db_compat.execute(db, query, params)
 
         rows = cursor.fetchall()
 
@@ -456,7 +456,6 @@ def submit_priorities(
     # ========================================================
 
     db = get_db()
-    cursor = db.cursor()
 
     try:
 
@@ -464,7 +463,8 @@ def submit_priorities(
         # VERIFY USER
         # ====================================================
 
-        cursor.execute(
+        cursor = db_compat.execute(
+            db,
             """
             SELECT id
             FROM users
@@ -493,7 +493,8 @@ def submit_priorities(
 
         for issue_id in cleaned_issue_ids:
 
-            cursor.execute(
+            cursor = db_compat.execute(
+                db,
                 """
                 SELECT id
                 FROM complaints
@@ -533,7 +534,8 @@ def submit_priorities(
 
         for issue_id in valid_ids:
 
-            cursor.execute(
+            cursor = db_compat.execute(
+                db,
                 """
                 SELECT id
                 FROM participatory_priorities
@@ -568,7 +570,8 @@ def submit_priorities(
 
         for issue_id in new_ids:
 
-            cursor.execute(
+            db_compat.execute(
+                db,
                 """
                 INSERT INTO participatory_priorities (
                     user_id,
