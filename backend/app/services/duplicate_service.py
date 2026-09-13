@@ -1243,6 +1243,10 @@ def find_duplicate_matches_vector(db, category, location, description, latitude=
 
     except Exception as exc:
         logger.warning("Vector duplicate search failed (%s), falling back to legacy.", exc)
+        try:
+            db.rollback()
+        except Exception:
+            pass
         return find_duplicate_matches_legacy(db, category, location, description)
 
 

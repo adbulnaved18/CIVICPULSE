@@ -14,3 +14,5 @@ pgvector>=0.3,<1.0
 alembic>=1.13,<2.0
 httpx>=0.27.0
 gunicorn>=21.2.0
+# Supabase Storage SDK — backend only; service-role key never reaches frontend
+supabase>=2.0,<3.0

@@ -52,7 +52,8 @@ def test_submit_complaint():
         "email": "citizen@test.com",
         "password": "password123"
     }
-    client.post("/auth/login", json=login_data)
+    # Include Origin so CSRF middleware is satisfied when cookie is present
+    client.post("/auth/login", json=login_data, headers={"Origin": "http://localhost:5173"})
 
     unique_id = uuid.uuid4().hex
     complaint_data = {
@@ -62,29 +63,47 @@ def test_submit_complaint():
         "location": f"Unique Area {unique_id}",
         "language": "en"
     }
-    res = client.post("/complaints/", json=complaint_data)
+    res = client.post("/complaints/", json=complaint_data, headers={"Origin": "http://localhost:5173"})
     assert res.status_code in (200, 409)
     if res.status_code == 200:
         data = res.json()
         assert "complaint_id" in data
     
 def test_check_duplicate():
+    """
+    Pre-seeds a complaint that will match our duplicate query so the test
+    is fully self-contained and does not rely on ambient database state.
+    """
     login_data = {
         "email": "citizen@test.com",
         "password": "password123"
     }
     client.post("/auth/login", json=login_data)
 
+    # Submit a complaint that the duplicate detector will match
+    seed_unique = uuid.uuid4().hex[:8]
+    seed_location = f"MG Road duplicate-seed-{seed_unique}, Bangalore"
+    client.post("/complaints/", json={
+        "description": "There is a massive pothole causing damage to vehicles on MG Road.",
+        "category": "Roads & Potholes",
+        "state": "Karnataka",
+        "location": seed_location,
+        "language": "en",
+    })
+
+    # Now check for a duplicate using the same category + location + overlapping description
     res = client.get("/complaints/check-duplicate", params={
         "category": "Roads & Potholes",
-        "location": "MG Road, Bangalore",
-        "description": "There is a massive pothole on MG Road."
+        "location": seed_location,
+        "description": "Deep pothole causing damage to vehicles on MG Road.",
     })
-    
+
     assert res.status_code == 200
     data = res.json()
     assert "is_duplicate" in data
-    assert data["is_duplicate"] == True # Because we just submitted one
+    assert data["is_duplicate"] is True, (
+        "Expected duplicate detection to trigger for pre-seeded complaint"
+    )
     assert len(data["matches"]) > 0
 
 def test_get_complaints():
@@ -104,12 +123,12 @@ def test_bearer_token_auth():
         "email": "citizen@test.com",
         "password": "password123"
     }
-    res = client.post("/auth/login", json=login_data)
+    res = client.post("/auth/login", json=login_data, headers={"Origin": "http://localhost:5173"})
     assert res.status_code == 200
     token = res.json().get("token")
     assert token is not None
 
-    # Test /auth/me with Authorization: Bearer header
+    # Test /auth/me with Authorization: Bearer header (GET — not affected by CSRF middleware)
     client_no_cookie = TestClient(app, cookies={})
     me_res = client_no_cookie.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me_res.status_code == 200

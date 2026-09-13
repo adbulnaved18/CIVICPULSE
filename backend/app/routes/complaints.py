@@ -1,3 +1,4 @@
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import (
@@ -13,7 +14,6 @@ from fastapi import (
 import hashlib
 import os
 import re
-import sqlite3
 import unicodedata
 import uuid
 
@@ -25,6 +25,15 @@ from backend.app.auth.dependencies import (
 from backend.app.models.complaint import Complaint
 
 from backend.app.services.database import get_db
+from backend.app.services import db_compat
+from backend.app.services.storage import (
+    upload_evidence,
+    get_evidence_url,
+    delete_evidence,
+    make_object_key,
+    validate_evidence,
+    record_recovery_task,
+)
 from backend.app.services.duplicate_service import (
     find_duplicate_matches,
     calculate_duplicate_score_legacy,
@@ -50,7 +59,6 @@ def create_complaint(
 ):
 
     db = get_db()
-    cursor = db.cursor()
 
     try:
 
@@ -90,7 +98,8 @@ def create_complaint(
         # CREATE COMPLAINT
         # ----------------------------------------------------
 
-        cursor.execute(
+        _, complaint_id = db_compat.execute_insert(
+            db,
             """
             INSERT INTO complaints (
                 description,
@@ -119,8 +128,6 @@ def create_complaint(
                 complaint.location_captured_at,
             ),
         )
-
-        complaint_id = cursor.lastrowid
 
         db.commit()
 
@@ -205,13 +212,13 @@ def get_complaints(
 ):
 
     db = get_db()
-    cursor = db.cursor()
 
     try:
 
         if state and state.strip():
 
-            cursor.execute(
+            cursor = db_compat.execute(
+                db,
                 """
                 SELECT
                     c.id,
@@ -250,7 +257,8 @@ def get_complaints(
 
         elif region and region.strip():
 
-            cursor.execute(
+            cursor = db_compat.execute(
+                db,
                 """
                 SELECT
                     c.id,
@@ -290,7 +298,8 @@ def get_complaints(
 
         else:
 
-            cursor.execute(
+            cursor = db_compat.execute(
+                db,
                 """
                 SELECT
                     c.id,
@@ -321,7 +330,7 @@ def get_complaints(
                     c.location_accuracy,
                     c.location_captured_at
                 ORDER BY c.id DESC
-                """
+                """,
             )
 
         rows = cursor.fetchall()
@@ -407,19 +416,19 @@ def get_complaints(
 def get_regions():
 
     db = get_db()
-    cursor = db.cursor()
 
     try:
 
-        cursor.execute(
+        cursor = db_compat.execute(
+            db,
             """
             SELECT DISTINCT state
             FROM complaints
             WHERE state IS NOT NULL
               AND TRIM(state) != ''
               AND state != 'Other'
-            ORDER BY state COLLATE NOCASE ASC
-            """
+            ORDER BY state ASC
+            """,
         )
 
         rows = cursor.fetchall()
@@ -463,7 +472,6 @@ def get_geo_complaints(
 ):
 
     db = get_db()
-    cursor = db.cursor()
 
     try:
 
@@ -524,7 +532,8 @@ def get_geo_complaints(
             ORDER BY c.id DESC
         """
 
-        cursor.execute(
+        cursor = db_compat.execute(
+            db,
             query,
             params,
         )
@@ -561,7 +570,7 @@ def get_geo_complaints(
 
                 "location_accuracy": row[9],
 
-                "created_at": row[10],
+                "created_at": str(row[10]) if row[10] else None,
 
                 "priority": priority,
             })
@@ -605,11 +614,11 @@ def update_complaint_status(
         )
 
     db = get_db()
-    cursor = db.cursor()
 
     try:
 
-        cursor.execute(
+        cursor = db_compat.execute(
+            db,
             """
             UPDATE complaints
             SET status = ?
@@ -682,7 +691,6 @@ def vote_complaint(
     )
 
     db = get_db()
-    cursor = db.cursor()
 
     try:
 
@@ -690,7 +698,8 @@ def vote_complaint(
         # CHECK COMPLAINT EXISTS
         # ----------------------------------------------------
 
-        cursor.execute(
+        cursor = db_compat.execute(
+            db,
             """
             SELECT id
             FROM complaints
@@ -716,7 +725,8 @@ def vote_complaint(
 
         try:
 
-            cursor.execute(
+            db_compat.execute(
+                db,
                 """
                 INSERT INTO complaint_votes (
                     complaint_id,
@@ -732,16 +742,12 @@ def vote_complaint(
 
             db.commit()
 
-        except sqlite3.IntegrityError as error:
+        except Exception as error:
 
             db.rollback()
 
-            # Only treat the UNIQUE constraint as
-            # an already-voted condition.
-            if (
-                "UNIQUE constraint failed"
-                in str(error)
-            ):
+            # Treat any unique/duplicate constraint as already-voted
+            if db_compat.is_unique_violation(error):
                 return {
                     "message": (
                         "You have already voted "
@@ -833,23 +839,24 @@ def check_duplicate(
 # ============================================================
 
 @router.post("/{complaint_id}/evidence")
-async def upload_evidence(
+async def upload_evidence_endpoint(
     complaint_id: int,
     file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
 ):
 
     db = get_db()
-    cursor = db.cursor()
 
     try:
 
         # ----------------------------------------------------
-        # CHECK COMPLAINT
+        # CHECK COMPLAINT & AUTHORIZATION
         # ----------------------------------------------------
 
-        cursor.execute(
+        cursor = db_compat.execute(
+            db,
             """
-            SELECT id
+            SELECT id, created_by
             FROM complaints
             WHERE id = ?
             """,
@@ -861,87 +868,120 @@ async def upload_evidence(
         complaint = cursor.fetchone()
 
         if not complaint:
-
             raise HTTPException(
                 status_code=404,
                 detail="Complaint not found",
             )
 
+        is_creator = complaint["created_by"] == current_user["id"]
+        is_admin = current_user.get("role") == "admin"
+        if not (is_creator or is_admin):
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to upload evidence for this complaint.",
+            )
+
         # ----------------------------------------------------
-        # CHECK FILE
+        # VALIDATE FILE
         # ----------------------------------------------------
 
         if not file.filename:
-
             raise HTTPException(
                 status_code=400,
                 detail="No file selected",
             )
 
+        file_content = await validate_evidence(file)
+        content_type = file.content_type or "image/jpeg"
+
         # ----------------------------------------------------
-        # EVIDENCE DIRECTORY
+        # UPLOAD TO STORAGE
         # ----------------------------------------------------
 
-        evidence_folder = (
-            "uploads/evidence"
+        object_key = make_object_key(
+            complaint_id, file.filename, content_type
         )
 
-        os.makedirs(
-            evidence_folder,
-            exist_ok=True,
-        )
-
-        # ----------------------------------------------------
-        # SAFE FILENAME
-        # ----------------------------------------------------
-
-        safe_filename = re.sub(
-            r"[^a-zA-Z0-9._-]",
-            "_",
-            file.filename,
-        )
-
-        file_path = os.path.join(
-            evidence_folder,
-            f"{complaint_id}_{safe_filename}",
-        ).replace("\\", "/")
-
-        # ----------------------------------------------------
-        # SAVE FILE
-        # ----------------------------------------------------
-
-        file_content = await file.read()
-
-        with open(
-            file_path,
-            "wb",
-        ) as buffer:
-
-            buffer.write(
-                file_content
+        try:
+            stored_path = upload_evidence(
+                file_bytes=file_content,
+                object_key=object_key,
+                content_type=content_type,
+            )
+        except RuntimeError as storage_err:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to upload evidence: {storage_err}",
             )
 
         # ----------------------------------------------------
         # SAVE DATABASE RECORD
+        # Compensating cleanup if DB write fails
         # ----------------------------------------------------
 
-        cursor.execute(
-            """
-            INSERT INTO complaint_evidence (
-                complaint_id,
-                file_path,
-                file_type
+        try:
+            db_compat.execute(
+                db,
+                """
+                INSERT INTO complaint_evidence (
+                    complaint_id,
+                    file_path,
+                    file_type
+                )
+                VALUES (?, ?, ?)
+                """,
+                (
+                    complaint_id,
+                    stored_path,
+                    content_type,
+                ),
             )
-            VALUES (?, ?, ?)
-            """,
-            (
-                complaint_id,
-                file_path,
-                file.content_type,
-            ),
-        )
 
-        db.commit()
+            db.commit()
+
+        except Exception as db_err:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+            # A rollback does not prove the transaction didn't commit on the DB.
+            # Check using a fresh connection before deleting the uploaded image.
+            record_exists = None
+            try:
+                fresh_db = get_db()
+                try:
+                    cur = db_compat.execute(
+                        fresh_db,
+                        "SELECT id FROM complaint_evidence WHERE file_path = ?",
+                        (stored_path,),
+                    )
+                    row = cur.fetchone()
+                    record_exists = (row is not None)
+                finally:
+                    fresh_db.close()
+            except Exception:
+                record_exists = None
+
+            if record_exists is False:
+                delete_evidence(stored_path)
+            elif record_exists is None:
+                record_recovery_task(
+                    "uncertain_evidence_commit_reconciliation",
+                    {
+                        "complaint_id": complaint_id,
+                        "storage_key": stored_path,
+                        "error": str(db_err),
+                    },
+                )
+
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to save evidence record.",
+            )
+
+        # Generate a signed URL for the response
+        file_url = get_evidence_url(stored_path)
 
         return {
             "message": (
@@ -950,9 +990,11 @@ async def upload_evidence(
 
             "complaint_id": complaint_id,
 
-            "file_path": file_path,
+            "file_path": stored_path,
 
-            "file_type": file.content_type,
+            "file_url": file_url,
+
+            "file_type": content_type,
         }
 
     except HTTPException:
@@ -988,7 +1030,6 @@ def get_evidence(
 ):
 
     db = get_db()
-    cursor = db.cursor()
 
     try:
 
@@ -996,7 +1037,8 @@ def get_evidence(
         # CHECK COMPLAINT
         # ----------------------------------------------------
 
-        cursor.execute(
+        cursor = db_compat.execute(
+            db,
             """
             SELECT id
             FROM complaints
@@ -1020,7 +1062,8 @@ def get_evidence(
         # GET EVIDENCE
         # ----------------------------------------------------
 
-        cursor.execute(
+        cursor = db_compat.execute(
+            db,
             """
             SELECT
                 id,
@@ -1042,12 +1085,19 @@ def get_evidence(
 
         for row in rows:
 
+            file_path = row[2]
+            # Generate a fresh signed URL (or local path) at read time.
+            # file_url is a new field; frontend prefers it when present.
+            file_url = get_evidence_url(file_path)
+
             evidence.append({
                 "id": row[0],
 
                 "complaint_id": row[1],
 
-                "file_path": row[2],
+                "file_path": file_path,
+
+                "file_url": file_url,
 
                 "file_type": row[3],
             })
@@ -1130,7 +1180,7 @@ async def submit_report(
     image_sha: Optional[str] = None
 
     if image and image.filename:
-        image_bytes = await image.read()
+        image_bytes = await validate_evidence(image)
         image_content_type = image.content_type or "image/jpeg"
         image_sha = hashlib.sha256(image_bytes).hexdigest()
 
@@ -1145,8 +1195,8 @@ async def submit_report(
     if analysis_id and analysis_id.strip():
         db_verify = get_db()
         try:
-            cursor = db_verify.cursor()
-            cursor.execute(
+            cursor = db_compat.execute(
+                db_verify,
                 """
                 SELECT
                     user_id,
@@ -1203,7 +1253,6 @@ async def submit_report(
     # Duplicate detection (using resolved category)
     # --------------------------------------------------------
     db = get_db()
-    cursor = db.cursor()
 
     try:
         duplicate_matches = find_duplicate_matches(
@@ -1230,7 +1279,8 @@ async def submit_report(
         # --------------------------------------------------------
         # Create complaint
         # --------------------------------------------------------
-        cursor.execute(
+        _, complaint_id = db_compat.execute_insert(
+            db,
             """
             INSERT INTO complaints (
                 description,
@@ -1271,54 +1321,115 @@ async def submit_report(
             ),
         )
 
-        complaint_id = cursor.lastrowid
-
         # --------------------------------------------------------
-        # Save evidence
+        # Save evidence to storage
         # --------------------------------------------------------
-        saved_path: Optional[str] = None
+        saved_object_key: Optional[str] = None
 
         if image_bytes and image_content_type:
-            upload_dir = "uploads/evidence"
-            os.makedirs(upload_dir, exist_ok=True)
-
-            ext = ".jpg"
-            if image_content_type == "image/png":
-                ext = ".png"
-            elif image_content_type == "image/gif":
-                ext = ".gif"
-            elif image_content_type == "image/webp":
-                ext = ".webp"
-
-            file_name = f"complaint_{complaint_id}_{uuid.uuid4().hex}{ext}"
-            file_path = os.path.join(upload_dir, file_name).replace("\\", "/")
+            object_key = make_object_key(
+                complaint_id,
+                image.filename or "evidence",
+                image_content_type,
+            )
 
             try:
-                with open(file_path, "wb") as f:
-                    f.write(image_bytes)
+                saved_object_key = upload_evidence(
+                    file_bytes=image_bytes,
+                    object_key=object_key,
+                    content_type=image_content_type,
+                )
 
-                cursor.execute(
+                db_compat.execute(
+                    db,
                     """
                     INSERT INTO complaint_evidence (
                         complaint_id, file_path, file_type
                     ) VALUES (?, ?, ?)
                     """,
-                    (complaint_id, file_path, image_content_type),
+                    (complaint_id, saved_object_key, image_content_type),
                 )
 
-                saved_path = file_path
-
-            except Exception as img_err:
-                # If file write fails, roll back everything.
+            except RuntimeError as img_err:
+                # Storage upload failed — roll back the complaint too
                 db.rollback()
-                if saved_path and os.path.exists(saved_path):
-                    os.remove(saved_path)
                 raise HTTPException(
                     status_code=500,
-                    detail="Failed to save evidence file.",
+                    detail="Failed to upload evidence file.",
                 )
 
-        db.commit()
+            except Exception as img_err:
+                # DB insert for evidence failed — clean up storage object
+                db.rollback()
+                if saved_object_key:
+                    delete_evidence(saved_object_key)
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to save evidence record.",
+                )
+
+        # --------------------------------------------------------
+        # Final commit — covered by storage cleanup
+        # --------------------------------------------------------
+        try:
+            db.commit()
+        except Exception as commit_err:
+            # Commit failed — attempt rollback on current connection
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+            # A successful or failed rollback() does NOT prove nothing committed
+            # (e.g. connection drops during commit). Check with a fresh connection.
+            if saved_object_key:
+                record_exists = None
+                try:
+                    fresh_db = get_db()
+                    try:
+                        cur = db_compat.execute(
+                            fresh_db,
+                            "SELECT id FROM complaints WHERE id = ?",
+                            (complaint_id,),
+                        )
+                        row = cur.fetchone()
+                        record_exists = (row is not None)
+                    finally:
+                        fresh_db.close()
+                except Exception as check_err:
+                    import logging as _log
+                    _log.getLogger(__name__).warning(
+                        "Failed to check complaint existence via fresh connection: %s", check_err
+                    )
+                    record_exists = None
+
+                if record_exists is True:
+                    import logging as _log
+                    _log.getLogger(__name__).info(
+                        "Complaint %s was verified committed via fresh connection despite commit error. Image '%s' retained.",
+                        complaint_id, saved_object_key
+                    )
+                elif record_exists is False:
+                    delete_evidence(saved_object_key)
+                else:
+                    # Result remains unknown: retain image and record recovery task
+                    record_recovery_task(
+                        "uncertain_commit_reconciliation",
+                        {
+                            "complaint_id": complaint_id,
+                            "storage_key": saved_object_key,
+                            "error": str(commit_err),
+                        },
+                    )
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Failed to submit complaint (uncertain outcome).",
+                    )
+
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to submit complaint.",
+            )
 
         # Generate and store embedding (non-blocking; failure is ignored)
         try:
@@ -1356,9 +1467,10 @@ async def submit_report(
 @router.get("/my")
 def get_my_complaints(current_user: dict = Depends(get_current_user)):
     db = get_db()
-    cursor = db.cursor()
+
     try:
-        cursor.execute(
+        cursor = db_compat.execute(
+            db,
             """
             SELECT
                 c.id, c.description, c.category, c.state, c.location,
@@ -1373,7 +1485,7 @@ def get_my_complaints(current_user: dict = Depends(get_current_user)):
                 c.location_accuracy, c.location_captured_at
             ORDER BY c.id DESC
             """,
-            (current_user['id'],)
+            (current_user['id'],),
         )
         rows = cursor.fetchall()
         complaints = []
@@ -1395,4 +1507,3 @@ def get_my_complaints(current_user: dict = Depends(get_current_user)):
         return complaints
     finally:
         db.close()
-

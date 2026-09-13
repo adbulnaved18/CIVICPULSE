@@ -2,6 +2,7 @@ from fastapi import Depends, HTTPException, Request, status
 
 from backend.app.auth.security import decode_access_token
 from backend.app.services.database import get_db
+from backend.app.services import db_compat
 
 COOKIE_NAME = "access_token"
 
@@ -42,9 +43,8 @@ def get_current_user(request: Request) -> dict:
     db = get_db()
 
     try:
-        cursor = db.cursor()
-
-        cursor.execute(
+        cursor = db_compat.execute(
+            db,
             "SELECT id, name, email, role FROM users WHERE id = ?",
             (user_id,),
         )

@@ -441,15 +441,9 @@ function AdminDashboard() {
       return "";
     }
 
-    /*
-     * Backend may return:
-     *
-     * uploads/evidence/8_sampleimg.jpg
-     *
-     * Convert to:
-     *
-     * http://127.0.0.1:8000/uploads/evidence/8_sampleimg.jpg
-     */
+    if (/^https?:\/\//i.test(filePath)) {
+      return filePath;
+    }
 
     const cleanPath = String(filePath).replace(
       /^\/+/,
@@ -1265,6 +1259,7 @@ function AdminDashboard() {
                           (item) => {
 
                             const evidenceUrl =
+                              item.file_url ||
                               getEvidenceUrl(
                                 item.file_path
                               );

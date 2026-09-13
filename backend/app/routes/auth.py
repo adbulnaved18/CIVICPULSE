@@ -11,6 +11,7 @@ from backend.app.auth.security import (
 )
 from backend.app.models.user import UserLogin, UserOut, UserSignup
 from backend.app.services.database import get_db
+from backend.app.services import db_compat
 
 router = APIRouter(
     prefix="/auth",
@@ -42,11 +43,11 @@ def signup(user: UserSignup):
     db = get_db()
 
     try:
-        cursor = db.cursor()
-
-        cursor.execute(
+        # Check email uniqueness
+        cursor = db_compat.execute(
+            db,
             "SELECT id FROM users WHERE email = ?",
-            (user.email,)
+            (user.email,),
         )
 
         if cursor.fetchone() is not None:
@@ -57,7 +58,8 @@ def signup(user: UserSignup):
 
         password_hash = hash_password(user.password)
 
-        cursor.execute(
+        _, new_id = db_compat.execute_insert(
+            db,
             """
             INSERT INTO users (name, email, password_hash, role)
             VALUES (?, ?, ?, 'citizen')
@@ -66,7 +68,6 @@ def signup(user: UserSignup):
         )
 
         db.commit()
-        new_id = cursor.lastrowid
 
         return UserOut(
             id=new_id,
@@ -107,9 +108,8 @@ def login(credentials: UserLogin, response: Response):
     db = get_db()
 
     try:
-        cursor = db.cursor()
-
-        cursor.execute(
+        cursor = db_compat.execute(
+            db,
             """
             SELECT id, name, email, password_hash, role
             FROM users
@@ -127,12 +127,12 @@ def login(credentials: UserLogin, response: Response):
     ):
         if email not in failed_login_attempts:
             failed_login_attempts[email] = {"count": 0, "lock_until": None}
-        
+
         failed_login_attempts[email]["count"] += 1
-        
+
         if failed_login_attempts[email]["count"] >= 5:
             failed_login_attempts[email]["lock_until"] = time.time() + 60
-            
+
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
